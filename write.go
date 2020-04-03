@@ -22,25 +22,28 @@ type WriteApi interface {
 	WritePoint(point *Point)
 	// Flush forces all pending writes from the buffer to be sent
 	Flush()
-	// Flushes all pending writes and stop async processes. After this the Write client cannot be used
+	// Close flushes all pending writes and stop async processes. After this the Write client cannot be used
 	Close()
-	// Errors return channel for reading errors which occurs during async writes
+	// Errors returns channel for reading errors which occurs during async writes
+	// Reading errors channel should be done asynchronously, e.g. in different go routine, otherwise it will block main routine
 	Errors() <-chan error
 }
 
 type writeApiImpl struct {
-	service     *writeService
-	writeBuffer []string
+	service           *writeService
+	writeBuffer       []string
+	writeBufferPoints []*Point
 
-	writeCh      chan *batch
-	bufferCh     chan string
-	writeStop    chan int
-	bufferStop   chan int
-	bufferFlush  chan int
-	doneCh       chan int
-	errCh        chan error
-	bufferInfoCh chan writeBuffInfoReq
-	writeInfoCh  chan writeBuffInfoReq
+	writeCh        chan *batch
+	bufferCh       chan string
+	bufferPointsCh chan *Point
+	writeStop      chan int
+	bufferStop     chan int
+	bufferFlush    chan int
+	doneCh         chan int
+	errCh          chan error
+	bufferInfoCh   chan writeBuffInfoReq
+	writeInfoCh    chan writeBuffInfoReq
 }
 
 type writeBuffInfoReq struct {
@@ -49,16 +52,18 @@ type writeBuffInfoReq struct {
 
 func newWriteApiImpl(org string, bucket string, client InfluxDBClient) *writeApiImpl {
 	w := &writeApiImpl{
-		service:      newWriteService(org, bucket, client),
-		writeBuffer:  make([]string, 0, client.Options().BatchSize()+1),
-		writeCh:      make(chan *batch),
-		doneCh:       make(chan int),
-		bufferCh:     make(chan string),
-		bufferStop:   make(chan int),
-		writeStop:    make(chan int),
-		bufferFlush:  make(chan int),
-		bufferInfoCh: make(chan writeBuffInfoReq),
-		writeInfoCh:  make(chan writeBuffInfoReq),
+		service:           newWriteService(org, bucket, client),
+		writeBuffer:       make([]string, 0, client.Options().BatchSize()+1),
+		writeBufferPoints: make([]*Point, 0, client.Options().BatchSize()+1),
+		writeCh:           make(chan *batch),
+		doneCh:            make(chan int),
+		bufferCh:          make(chan string),
+		bufferPointsCh:    make(chan *Point),
+		bufferStop:        make(chan int),
+		writeStop:         make(chan int),
+		bufferFlush:       make(chan int),
+		bufferInfoCh:      make(chan writeBuffInfoReq),
+		writeInfoCh:       make(chan writeBuffInfoReq),
 	}
 	go w.bufferProc()
 	go w.writeProc()
@@ -111,6 +116,11 @@ x:
 			if len(w.writeBuffer) == int(w.service.client.Options().BatchSize()) {
 				w.flushBuffer()
 			}
+		case point := <-w.bufferPointsCh:
+			w.writeBufferPoints = append(w.writeBufferPoints, point)
+			if len(w.writeBufferPoints) == int(w.service.client.Options().BatchSize()) {
+				w.flushBuffer()
+			}
 		case <-ticker.C:
 			w.flushBuffer()
 		case <-w.bufferFlush:
@@ -130,15 +140,24 @@ x:
 
 func (w *writeApiImpl) flushBuffer() {
 	if len(w.writeBuffer) > 0 {
-		//go func(lines []string) {
 		logger.Info("sending batch")
 		batch := &batch{batch: buffer(w.writeBuffer)}
 		w.writeCh <- batch
-		//	lines = lines[:0]
-		//}(w.writeBuffer)
-		//w.writeBuffer = make([]string,0, w.service.client.Options.BatchSize+1)
 		w.writeBuffer = w.writeBuffer[:0]
 	}
+	if len(w.writeBufferPoints) > 0 {
+		logger.Info("sending batch")
+		line, err := w.service.encodePoints(w.writeBufferPoints...)
+		if err != nil {
+			logger.Errorf("batch encoding error: %s", err)
+		} else {
+			batch := &batch{batch: line}
+			w.writeCh <- batch
+			w.writeBufferPoints = w.writeBufferPoints[:0]
+
+		}
+	}
+
 }
 
 func (w *writeApiImpl) writeProc() {
@@ -173,6 +192,7 @@ func (w *writeApiImpl) Close() {
 		close(w.bufferStop)
 		close(w.bufferFlush)
 		close(w.bufferCh)
+		close(w.bufferPointsCh)
 		w.writeStop <- 1
 		//wait for the write proc
 		<-w.doneCh
@@ -200,13 +220,7 @@ func (w *writeApiImpl) WriteRecord(line string) {
 }
 
 func (w *writeApiImpl) WritePoint(point *Point) {
-	//w.bufferCh <- point.ToLineProtocol(w.service.client.Options().Precision)
-	line, err := w.service.encodePoints(point)
-	if err != nil {
-		logger.Errorf("point encoding error: %s\n", err.Error())
-	} else {
-		w.bufferCh <- line
-	}
+	w.bufferPointsCh <- point
 }
 
 func buffer(lines []string) string {
