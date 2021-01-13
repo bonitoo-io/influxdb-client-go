@@ -1,7 +1,6 @@
 package influxclient
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,14 +112,14 @@ func NewClient(params Params) (*Client, error) {
 // use the PointWriter method.
 func (c *Client) WritePoints(org, bucket string, points []influxdata.Point) error {
 	var err error
-	var buff bytes.Buffer
-	var b []byte
+	var buff strings.Builder
+	size := 0
 	for _, p := range points {
-		b, err = p.MarshalBinary()
-		if err != nil {
-			return fmt.Errorf("error marshaling points: %w", err)
-		}
-		_, err = buff.Write(b)
+		size += p.StringSize()
+	}
+	buff.Grow(size + len(points))
+	for _, p := range points {
+		_, err = buff.WriteString(p.String())
 		if err != nil {
 			return fmt.Errorf("error marshaling points: %w", err)
 		}
@@ -130,7 +129,7 @@ func (c *Client) WritePoints(org, bucket string, points []influxdata.Point) erro
 		}
 	}
 
-	resp, err := c.makeAPIRequest(c.writeURL, org, bucket, bytes.NewReader(buff.Bytes()))
+	resp, err := c.makeAPIRequest(c.writeURL, org, bucket, strings.NewReader(buff.String()))
 	if err != nil {
 		return err
 	}

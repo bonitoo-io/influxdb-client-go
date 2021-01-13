@@ -70,5 +70,5 @@ func TestClient_WritePoints(t *testing.T) {
 	require.NoError(t, err)
 
 	err = c.WritePoints("o", "b", points)
-
+	require.NoError(t, err)
 }
