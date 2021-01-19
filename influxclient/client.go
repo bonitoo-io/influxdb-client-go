@@ -123,13 +123,13 @@ func (c *Client) WritePoints(org, bucket string, points []influxdata.Point) erro
 		if err != nil {
 			return fmt.Errorf("error marshaling points: %w", err)
 		}
-		_, err = buff.WriteRune('\n')
+		_, err = buff.WriteString("\n")
 		if err != nil {
 			return fmt.Errorf("error marshaling points: %w", err)
 		}
 	}
 
-	resp, err := c.makeAPIRequest(c.writeURL, org, bucket, strings.NewReader(buff.String()))
+	resp, err := c.MakeAPICall(http.MethodPost, c.writeURL, map[string]string{"org": org, "bucket": bucket, "precision": "n"}, strings.NewReader(buff.String()))
 	if err != nil {
 		return err
 	}
@@ -139,22 +139,23 @@ func (c *Client) WritePoints(org, bucket string, points []influxdata.Point) erro
 	return nil
 }
 
-// makeAPIRequest issues a POST request and handle HTTP errors
-func (c *Client) makeAPIRequest(endpoint *url.URL, org, bucket string, body io.Reader) (*http.Response, error) {
-	params := make(url.Values)
+// MakeAPICall issues an HTTP request to InfluxDB server API and return response.
+// HTTP errors are handled and returned as an error
+// httpMethod - HTTP verb, e.g. POST, GET
+// endpoint -
+func (c *Client) MakeAPICall(httpMethod string, endpoint *url.URL, queryParams map[string]string, body io.Reader) (*http.Response, error) {
+	urlParams := make(url.Values)
 
-	params.Set("org", org)
-	if bucket != "" {
-		params.Set("bucket", bucket)
-		params.Set("precision", "ns")
+	for k, v := range queryParams {
+		urlParams.Set(k, v)
 	}
 	// copy URL
 	urlObj := *endpoint
-	urlObj.RawQuery = params.Encode()
+	urlObj.RawQuery = urlParams.Encode()
 
 	fullURL := urlObj.String()
 
-	req, err := http.NewRequest("POST", fullURL, body)
+	req, err := http.NewRequest(httpMethod, fullURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("error calling %s: %w", fullURL, err)
 	}
@@ -167,13 +168,14 @@ func (c *Client) makeAPIRequest(endpoint *url.URL, org, bucket string, body io.R
 	if err != nil {
 		return nil, fmt.Errorf("error calling %s: %w", fullURL, err)
 	}
-	if resp.StatusCode < 200 && resp.StatusCode > 299 {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, c.handleHTTPError(resp)
 	}
 
 	return resp, nil
 }
 
+// handleHTTPError parses server error response and returns error with human readable message
 func (c *Client) handleHTTPError(r *http.Response) error {
 	// successful status code range
 	if r.StatusCode >= 200 && r.StatusCode < 300 {
