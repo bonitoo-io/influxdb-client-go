@@ -69,7 +69,8 @@ func TestExactWrite(t *testing.T) {
 			message = "invalid method"
 		} else if ok = r.URL.Path == "/api/v2/write"; !ok {
 			message = "invalid url"
-		} else if ok = len(query) == 3 && query["org"][0] == "o" && query["bucket"][0] == "b" && query["precision"][0] == "ns"; !ok {
+		} else if ok = len(query) == 3 && query["org"][0] == "o" && query["bucket"][0] == "b" && query["precision"][0] == "n"; !ok {
+			fmt.Printf("%v", query)
 			message = "invalid query"
 		} else {
 			if body, err := ioutil.ReadAll(r.Body); err == nil {
