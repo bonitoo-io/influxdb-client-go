@@ -103,7 +103,7 @@ func TestExactWrite(t *testing.T) {
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"code": "invalid", "message":"%s"}`, message)))
 		}
 	}))
-	c, err := influxclient.NewClient(influxclient.Params{ServerURL: server.URL, AuthToken: "123"})
+	c, err := influxclient.New(influxclient.Params{ServerURL: server.URL, AuthToken: "123"})
 
 	require.NoError(t, err)
 	require.NotNil(t, c)

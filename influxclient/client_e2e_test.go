@@ -30,7 +30,7 @@ func getEnvValue(key, defVal string) string {
 
 func TestWrite(t *testing.T) {
 	points := genPoints(5)
-	c, err := influxclient.NewClient(influxclient.Params{ServerURL: serverURL, AuthToken: authToken})
+	c, err := influxclient.New(influxclient.Params{ServerURL: serverURL, AuthToken: authToken})
 	require.NoError(t, err)
 	require.NotNil(t, c)
 	err = c.WritePoints("my-org", "my-bucket", points)

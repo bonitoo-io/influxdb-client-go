@@ -1,4 +1,4 @@
-// Copyright 2020 InfluxData, Inc. All rights reserved.
+// Copyright 2021 InfluxData, Inc. All rights reserved.
 // Use of this source code is governed by MIT
 // license that can be found in the LICENSE file.
 
@@ -68,18 +68,20 @@ type Params struct {
 
 // Client implements an InfluxDB client.
 type Client struct {
-	// Configuration params
+	// Configuration params.
 	params Params
-	// Pre-created Authorization HTTP header value
+	// Pre-created Authorization HTTP header value.
 	authorization string
-	// pre-created write endpoint URL
+	// Cached base server API URL.
+	apiURL *url.URL
+	// Cached write endpoint URL.
 	writeURL *url.URL
-	// pre-created query endpoint URL
+	// Cached query endpoint URL.
 	queryURL *url.URL
 }
 
-// NewClient creates new Client with given Params. Its ServerURL
-func NewClient(params Params) (*Client, error) {
+// New creates new Client with given Params, where ServerURL and AuthToken are mandatory.
+func New(params Params) (*Client, error) {
 	c := &Client{params: params}
 	if params.ServerURL == "" {
 		return nil, ErrEmptyServerURL
@@ -94,19 +96,14 @@ func NewClient(params Params) (*Client, error) {
 	if c.params.HTTPClient == nil {
 		c.params.HTTPClient = http.DefaultClient
 	}
-	// Prepared basic URLs
+	// Prepare basic URLs
 	serverURL, err := url.Parse(c.params.ServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing server URL: %w", err)
 	}
-	c.writeURL, err = serverURL.Parse("api/v2/write")
-	if err != nil {
-		return nil, fmt.Errorf("error parsing server URL: %w", err)
-	}
-	c.queryURL, err = serverURL.Parse("api/v2/query")
-	if err != nil {
-		return nil, fmt.Errorf("error parsing server URL: %w", err)
-	}
+	c.apiURL, _ = serverURL.Parse("api/v2/")
+	c.writeURL, _ = c.apiURL.Parse("write")
+	c.queryURL, _ = c.apiURL.Parse("query")
 	return c, nil
 }
 
@@ -134,7 +131,7 @@ func (c *Client) WritePoints(org, bucket string, points []influxdata.Point) erro
 		}
 	}
 
-	resp, err := c.MakeAPICall(http.MethodPost, c.writeURL, map[string]string{"org": org, "bucket": bucket, "precision": "n"}, strings.NewReader(buff.String()))
+	resp, err := c.makeAPICallWithParams(http.MethodPost, c.writeURL, map[string]string{"org": org, "bucket": bucket, "precision": "n"}, strings.NewReader(buff.String()))
 	if err != nil {
 		return err
 	}
@@ -144,25 +141,31 @@ func (c *Client) WritePoints(org, bucket string, points []influxdata.Point) erro
 	return nil
 }
 
-// MakeAPICall issues an HTTP request to InfluxDB server API and return response.
-// HTTP errors are handled and returned as an error
-// httpMethod - HTTP verb, e.g. POST, GET
-// endpoint -
-func (c *Client) MakeAPICall(httpMethod string, endpoint *url.URL, queryParams map[string]string, body io.Reader) (*http.Response, error) {
+// makeAPICallWithParams issues an HTTP request to InfluxDB server API url and return response.
+// It constructs full url from endpoint and queryParams
+func (c *Client) makeAPICallWithParams(httpMethod string, endpointURL *url.URL, queryParams map[string]string, body io.Reader) (*http.Response, error) {
 	urlParams := make(url.Values)
 
 	for k, v := range queryParams {
 		urlParams.Set(k, v)
 	}
 	// copy URL
-	urlObj := *endpoint
+	urlObj := *endpointURL
 	urlObj.RawQuery = urlParams.Encode()
 
 	fullURL := urlObj.String()
 
-	req, err := http.NewRequest(httpMethod, fullURL, body)
+	return c.MakeAPICall(httpMethod, fullURL, body)
+}
+
+// MakeAPICall issues an HTTP request to InfluxDB server API url and return response.
+// HTTP errors are handled and returned as an error. HttpMethod is an HTTP verb, e.g. POST, GET.
+// Body can be nil.
+func (c *Client) MakeAPICall(httpMethod string, url string, body io.Reader) (*http.Response, error) {
+
+	req, err := http.NewRequest(httpMethod, url, body)
 	if err != nil {
-		return nil, fmt.Errorf("error calling %s: %w", fullURL, err)
+		return nil, fmt.Errorf("error calling %s: %w", url, err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 	if c.authorization != "" {
@@ -171,17 +174,17 @@ func (c *Client) MakeAPICall(httpMethod string, endpoint *url.URL, queryParams m
 
 	resp, err := c.params.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error calling %s: %w", fullURL, err)
+		return nil, fmt.Errorf("error calling %s: %w", url, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, c.handleHTTPError(resp)
+		return nil, c.resolveHTTPError(resp)
 	}
 
 	return resp, nil
 }
 
-// handleHTTPError parses server error response and returns error with human readable message
-func (c *Client) handleHTTPError(r *http.Response) error {
+// resolveHTTPError parses server error response and returns error with human readable message
+func (c *Client) resolveHTTPError(r *http.Response) error {
 	// successful status code range
 	if r.StatusCode >= 200 && r.StatusCode < 300 {
 		return nil
