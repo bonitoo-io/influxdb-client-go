@@ -40,7 +40,8 @@ type parsingState int
 type parsingMode int
 
 const (
-	parsingStateDataRow parsingState = iota
+	parsingStateNoTable parsingState = iota
+	parsingStateDataRow
 	parsingStateAnnotation
 	parsingStateNameRow
 	parsingStateError
@@ -79,8 +80,54 @@ func NewQueryResult(reader io.ReadCloser) *QueryResult {
 	}
 }
 
-// next advances to next row/table via parsing csv rows
-// returns false at the end of each table  or at the end of stream
+// NextTable advances to the next result in the result.
+// Any remaining data in the current table is discarded.
+//
+// When there are no more tables, it returns false.
+func (r *QueryResult) NextTable() bool {
+	return r.next(parsingModeTable)
+}
+
+// NextRow advances to the next row in the current result.
+// When there are no more rows in the current result, it
+// returns false.
+func (r *QueryResult) NextRow() bool {
+	return r.next(parsingModeRow)
+}
+
+// Columns returns information on the columns in the current
+// table. It returns nil if there is no current table (for example
+// before NextTable has been called, or after NextTable returns false).
+func (r *QueryResult) Columns() []TableColumn {
+	return r.columns
+}
+
+// Err returns any error encountered. This should be called after NextTable or NextRow
+// returns false to check that all the results were correctly received.
+func (r *QueryResult) Err() error {
+	return r.err
+}
+
+// Values returns the values in the current row.
+// It returns nil if there is no current row.
+// All rows in a table have the same number of values.
+// The caller should not use the slice after NextRow
+// has been called again, because it's re-used.
+func (r *QueryResult) Values() []interface{} {
+	return r.values
+}
+
+// ValueByName returns value for given column name.
+// It returns nil if result has no value for such column.
+func (r *QueryResult) ValueByName(name string) interface{} {
+	if i, ok := r.names[name]; ok {
+		return r.values[i]
+	}
+	return nil
+}
+
+// next advances to next row/result via parsing csv rows
+// returns false at the end of each result  or at the end of stream
 func (r *QueryResult) next(mode parsingMode) bool {
 	// set closing query in case of preliminary return
 	var row []string
@@ -114,33 +161,22 @@ readRow:
 	if len(row) <= 1 {
 		goto readRow
 	}
-	if len(row[0]) > 0 && row[0][0] == '#' && parsingState == parsingStateDataRow {
-		// table definition was found. if next row is requested, and not the initial table, return
-		if mode == parsingModeRow && r.columns != nil {
-			r.lastRow = row
-			closer = func() {}
+	if r.columns == nil {
+		parsingState = parsingStateNoTable
+	} else {
+		// test columns consistency in case of data row or already discovered annotations
+		if (row[0] == "" || parsingState == parsingStateAnnotation) &&
+			len(row)-1 != len(r.columns) {
+			r.err = fmt.Errorf("parsing error, row has different number of columns than the table: %d vs %d", len(row)-1, len(r.columns))
 			return false
 		}
-		if r.columns == nil || len(r.columns) != len(row)-1 {
-			r.columns = make([]TableColumn, len(row)-1)
-		} else {
-			for i := range row[1:] {
-				r.columns[i] = TableColumn{}
-			}
-		}
-		parsingState = parsingStateAnnotation
-	}
-	if r.columns == nil {
-		r.err = errors.New("parsing error, annotations not found")
-		return false
-	}
-	if len(row)-1 != len(r.columns) {
-		r.err = fmt.Errorf("parsing error, row has different number of columns than the table: %d vs %d", len(row)-1, len(r.columns))
-		return false
 	}
 	switch {
 	case row[0] == "":
 		switch parsingState {
+		case parsingStateNoTable:
+			r.err = errors.New("parsing error, annotations not found")
+			return false
 		case parsingStateAnnotation:
 			if !dataTypeAnnotationFound {
 				r.err = errors.New("parsing error, datatype annotation not found")
@@ -183,9 +219,7 @@ readRow:
 					goto readRow
 				}
 			} else {
-				if r.values == nil || len(r.values) != len(row)-1 {
-					r.values = make([]interface{}, len(row)-1)
-				}
+
 				for i, v := range row[1:] {
 					r.values[i], r.err = toValue(v, r.columns[i])
 					if r.err != nil {
@@ -195,74 +229,51 @@ readRow:
 			}
 		}
 	case row[0][0] == '#':
-		switch row[0] {
-		case "#datatype":
-			dataTypeAnnotationFound = true
-			for i, d := range row[1:] {
-				r.columns[i].DataType = d
+		switch parsingState {
+		case parsingStateNoTable:
+			parsingState = parsingStateDataRow
+			fallthrough
+		case parsingStateDataRow:
+			// table definition was found. if next row is requested, and not the initial table, return
+			if mode == parsingModeRow && r.columns != nil {
+				r.lastRow = row
+				closer = func() {}
+				return false
 			}
-			goto readRow
-		case "#group":
-			for i, g := range row[1:] {
-				r.columns[i].IsGroup = g == "true"
+			if r.columns == nil || len(r.columns) != len(row)-1 {
+				r.columns = make([]TableColumn, len(row)-1)
+				r.values = make([]interface{}, len(row)-1)
+			} else {
+				for i := range row[1:] {
+					r.columns[i] = TableColumn{}
+				}
 			}
-			goto readRow
-		case "#default":
-			for i, c := range row[1:] {
-				r.columns[i].DefaultValue = c
+			parsingState = parsingStateAnnotation
+			fallthrough
+		case parsingStateAnnotation:
+			switch row[0] {
+			case "#datatype":
+				dataTypeAnnotationFound = true
+				for i, d := range row[1:] {
+					r.columns[i].DataType = d
+				}
+				goto readRow
+			case "#group":
+				for i, g := range row[1:] {
+					r.columns[i].IsGroup = g == "true"
+				}
+				goto readRow
+			case "#default":
+				for i, c := range row[1:] {
+					r.columns[i].DefaultValue = c
+				}
+				goto readRow
 			}
-			goto readRow
 		}
 	}
 	// don't close query
 	closer = func() {}
 	return true
-}
-
-// NextTable advances to the next table in the result.
-// Any remaining data in the current table is discarded.
-//
-// When there are no more tables, it returns false.
-func (r *QueryResult) NextTable() bool {
-	return r.next(parsingModeTable)
-}
-
-// NextRow advances to the next row in the current table.
-// When there are no more rows in the current table, it
-// returns false.
-func (r *QueryResult) NextRow() bool {
-	return r.next(parsingModeRow)
-}
-
-// Columns returns information on the columns in the current
-// table. It returns nil if there is no current table (for example
-// before NextTable has been called, or after NextTable returns false).
-func (r *QueryResult) Columns() []TableColumn {
-	return r.columns
-}
-
-// Err returns any error encountered. This should be called after NextTable or NextRow
-// returns false to check that all the results were correctly received.
-func (r *QueryResult) Err() error {
-	return r.err
-}
-
-// Values returns the values in the current row.
-// It returns nil if there is no current row.
-// All rows in a table have the same number of values.
-// The caller should not use the slice after NextRow
-// has been called again, because it's re-used.
-func (r *QueryResult) Values() []interface{} {
-	return r.values
-}
-
-// ValueByName returns value for given column name.
-// It returns nil if result has no value for such column.
-func (r *QueryResult) ValueByName(name string) interface{} {
-	if i, ok := r.names[name]; ok {
-		return r.values[i]
-	}
-	return nil
 }
 
 // toValues converts s into type by t

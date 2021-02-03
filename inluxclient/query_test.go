@@ -140,8 +140,8 @@ func TestQueryResultSingleTable(t *testing.T) {
 	verifyTables(t, csvTable, tables)
 }
 
-func TestQueryCVSResultMultiTables(t *testing.T) {
-	csvTable := `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
+func TestQueryResultMultiTables(t *testing.T) {
+	csvTableMultiStructure := `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
 #group,false,false,true,true,false,false,true,true,true,true
 #default,_result,,,,,,,,,
 ,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
@@ -171,7 +171,7 @@ d
 ,,3,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.969100374Z,2,i,test,0,adsfasdf
 
 `
-	tables := []expectedTable{
+	tablesMultiStructure := []expectedTable{
 		{ // Table 1
 			[]influxclient.TableColumn{
 				{DataType: "string", DefaultValue: "_result", Name: "result", IsGroup: false},
@@ -329,11 +329,138 @@ d
 			},
 		},
 	}
-	verifyTables(t, csvTable, tables)
+	verifyTables(t, csvTableMultiStructure, tablesMultiStructure)
+
+	csvTableMultiTables := `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
+#group,false,false,true,true,false,false,true,true,true,true
+#default,_result,,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,1.4,f,test,1,adsfasdf
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,6.6,f,test,1,adsfasdf
+,,1,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,4.3,i,test,1,xyxyxyxy
+,,1,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,-1.2,i,test,1,xyxyxyxy
+,,2,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.62797864Z,0.1,f,test,0,adsfasdf
+,,2,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.969100374Z,0.3,f,test,0,adsfasdf
+,,3,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.62797864Z,10,i,test,0,xyxyxyxy
+,,3,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.969100374Z,2,i,test,0,xyxyxyxy
+
+`
+	tablesMultiTables := []expectedTable{
+		{
+			[]influxclient.TableColumn{
+				{DataType: "string", DefaultValue: "_result", Name: "result", IsGroup: false},
+				{DataType: "long", DefaultValue: "", Name: "table", IsGroup: false},
+				{DataType: "dateTime:RFC3339", DefaultValue: "", Name: "_start", IsGroup: true},
+				{DataType: "dateTime:RFC3339", DefaultValue: "", Name: "_stop", IsGroup: true},
+				{DataType: "dateTime:RFC3339", DefaultValue: "", Name: "_time", IsGroup: false},
+				{DataType: "double", DefaultValue: "", Name: "_value", IsGroup: false},
+				{DataType: "string", DefaultValue: "", Name: "_field", IsGroup: true},
+				{DataType: "string", DefaultValue: "", Name: "_measurement", IsGroup: true},
+				{DataType: "string", DefaultValue: "", Name: "a", IsGroup: true},
+				{DataType: "string", DefaultValue: "", Name: "b", IsGroup: true},
+			},
+			[][]interface{}{
+				{"_result",
+					int64(0),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T10:34:08.135814545Z"),
+					1.4,
+					"f",
+					"test",
+					"1",
+					"adsfasdf",
+				},
+				{
+					"_result",
+					int64(0),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:08:44.850214724Z"),
+					6.6,
+					"f",
+					"test",
+					"1",
+					"adsfasdf",
+				},
+				{"_result",
+					int64(1),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T10:34:08.135814545Z"),
+					4.3,
+					"i",
+					"test",
+					"1",
+					"xyxyxyxy",
+				},
+				{
+					"_result",
+					int64(1),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:08:44.850214724Z"),
+					-1.2,
+					"i",
+					"test",
+					"1",
+					"xyxyxyxy",
+				},
+				{"_result",
+					int64(2),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:08:44.62797864Z"),
+					0.1,
+					"f",
+					"test",
+					"0",
+					"adsfasdf",
+				},
+				{
+					"_result",
+					int64(2),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:08:44.969100374Z"),
+					0.3,
+					"f",
+					"test",
+					"0",
+					"adsfasdf",
+				},
+				{"_result",
+					int64(3),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:08:44.62797864Z"),
+					float64(10),
+					"i",
+					"test",
+					"0",
+					"xyxyxyxy",
+				},
+				{
+					"_result",
+					int64(3),
+					mustParseTime("2020-02-17T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:19:49.747562847Z"),
+					mustParseTime("2020-02-18T22:08:44.969100374Z"),
+					float64(2),
+					"i",
+					"test",
+					"0",
+					"xyxyxyxy",
+				},
+			},
+		},
+	}
+	verifyTables(t, csvTableMultiTables, tablesMultiTables)
+
 }
 
 func TestAdvanceInTable(t *testing.T) {
-	csvTable := `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
+	csvTableMultiStructure := `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
 #group,false,false,true,true,false,false,true,true,true,true
 #default,_result,,,,,,,,,
 ,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
@@ -522,7 +649,7 @@ d
 		},
 	}
 
-	reader := strings.NewReader(csvTable)
+	reader := strings.NewReader(csvTableMultiStructure)
 	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
 
 	//test skip first table header
@@ -531,13 +658,15 @@ d
 	require.Equal(t, tables[0].rows[0], res.Values())
 	_ = res.Close()
 
-	reader = strings.NewReader(csvTable)
+	reader = strings.NewReader(csvTableMultiStructure)
 	res = influxclient.NewQueryResult(ioutil.NopCloser(reader))
 
 	//test skip tables
 	require.True(t, res.NextTable())
 	require.Nil(t, res.Err())
 	require.True(t, res.NextTable())
+	require.Nil(t, res.Err())
+	require.True(t, res.NextRow())
 	require.Nil(t, res.Err())
 	require.True(t, res.NextTable())
 	require.Nil(t, res.Err())
@@ -546,6 +675,36 @@ d
 	require.Equal(t, tables[2].rows[0], res.Values())
 
 	_ = res.Close()
+
+	csvTableMultiTables := `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
+#group,false,false,true,true,false,false,true,true,true,true
+#default,_result,,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,1.4,f,test,1,adsfasdf
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,6.6,f,test,1,adsfasdf
+,,1,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,4.3,i,test,1,xyxyxyxy
+,,1,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,-1.2,i,test,1,xyxyxyxy
+,,2,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.62797864Z,0.1,f,test,0,adsfasdf
+,,2,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.969100374Z,0.3,f,test,0,adsfasdf
+,,3,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.62797864Z,10,i,test,0,xyxyxyxy
+,,3,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.969100374Z,2,i,test,0,xyxyxyxy
+
+`
+	reader = strings.NewReader(csvTableMultiTables)
+	res = influxclient.NewQueryResult(ioutil.NopCloser(reader))
+
+	//test skip first table header
+	require.True(t, res.NextRow() && res.NextRow())
+	require.Nil(t, res.Err())
+	require.Equal(t, tables[0].rows[1], res.Values())
+	_ = res.Close()
+
+	reader = strings.NewReader(csvTableMultiTables)
+	res = influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	require.True(t, res.NextTable())
+	require.Nil(t, res.Err())
+	require.False(t, res.NextTable())
+	require.Nil(t, res.Err())
 }
 
 func TestTableColumn_String(t *testing.T) {
