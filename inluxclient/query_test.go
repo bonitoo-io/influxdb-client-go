@@ -30,7 +30,7 @@ type expectedTable struct {
 
 func verifyTables(t *testing.T, csv string, tables []expectedTable) {
 	reader := strings.NewReader(csv)
-	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	for _, table := range tables {
 		require.True(t, res.NextTable(), res.Err())
@@ -50,11 +50,15 @@ func verifyTables(t *testing.T, csv string, tables []expectedTable) {
 
 	require.False(t, res.NextTable(), res.Err())
 	require.Nil(t, res.Err())
+
+	require.Nil(t, res.Columns())
+	require.Nil(t, res.Values())
+	require.Nil(t, res.ValueByName("table"))
 }
 
 func verifyParsingError(t *testing.T, csvTable, error string) {
 	reader := strings.NewReader(csvTable)
-	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	require.False(t, res.NextTable())
 	require.NotNil(t, res.Err())
@@ -72,7 +76,7 @@ func TestQueryResult(t *testing.T) {
 
 `
 	reader := strings.NewReader(csvTable)
-	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
 	for res.NextTable() && res.Err() == nil {
 		for res.NextRow() {
 			// read values
@@ -650,7 +654,7 @@ d
 	}
 
 	reader := strings.NewReader(csvTableMultiStructure)
-	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	//test skip first table header
 	require.True(t, res.NextRow())
@@ -659,7 +663,7 @@ d
 	_ = res.Close()
 
 	reader = strings.NewReader(csvTableMultiStructure)
-	res = influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res = influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	//test skip tables
 	require.True(t, res.NextTable())
@@ -691,7 +695,7 @@ d
 
 `
 	reader = strings.NewReader(csvTableMultiTables)
-	res = influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res = influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	//test skip first table header
 	require.True(t, res.NextRow() && res.NextRow())
@@ -700,7 +704,7 @@ d
 	_ = res.Close()
 
 	reader = strings.NewReader(csvTableMultiTables)
-	res = influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res = influxclient.NewQueryResults(ioutil.NopCloser(reader))
 	require.True(t, res.NextTable())
 	require.Nil(t, res.Err())
 	require.False(t, res.NextTable())
@@ -817,7 +821,7 @@ func TestQueryResult_ValueByName(t *testing.T) {
 	verifyTables(t, csvTable, tables)
 
 	reader := strings.NewReader(csvTable)
-	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	require.True(t, res.NextTable() && res.NextRow(), res.Err())
 	require.Nil(t, res.Err())
@@ -866,7 +870,7 @@ func TestInvalidDataType(t *testing.T) {
 `
 
 	reader := strings.NewReader(csvTable)
-	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	require.True(t, res.NextTable())
 	require.Nil(t, res.Err())
@@ -1058,7 +1062,7 @@ func TestCSVError(t *testing.T) {
 ,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,6.6,f,test,1,adsfasdf
 `
 	reader := strings.NewReader(csvErrTable)
-	res := influxclient.NewQueryResult(ioutil.NopCloser(reader))
+	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	require.False(t, res.NextTable())
 	require.NotNil(t, res.Err())
@@ -1088,7 +1092,7 @@ func TestCloseError(t *testing.T) {
 ,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,6.6,f,test,1,adsfasdf
 `
 	reader := strings.NewReader(csvTable)
-	res := influxclient.NewQueryResult(newErrCloser(reader))
+	res := influxclient.NewQueryResults(newErrCloser(reader))
 
 	require.True(t, res.NextTable() && res.NextRow() && res.NextRow())
 	require.False(t, res.NextRow())
@@ -1096,7 +1100,7 @@ func TestCloseError(t *testing.T) {
 	assert.Equal(t, "close error", res.Err().Error())
 
 	reader = strings.NewReader(csvErrTable)
-	res = influxclient.NewQueryResult(newErrCloser(reader))
+	res = influxclient.NewQueryResults(newErrCloser(reader))
 
 	require.False(t, res.NextTable())
 	require.NotNil(t, res.Err())

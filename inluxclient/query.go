@@ -48,17 +48,18 @@ const (
 )
 
 const (
-	parsingModeTable parsingMode = iota
+	parsingModeResult parsingMode = iota
 	parsingModeRow
 )
 
-// QueryResult parses Flux query response stream.
-// Walking though the result is done by repeatedly calling NextTable() and NextRow() until return false.
-// Actual flux table info (columns with names, data types, etc) is returned by Columns() method.
-// Data are acquired by Values() method.
+// QueryResults parses Flux query response stream.
+// Walking though the result set is done by repeatedly calling NextTable() and NextRow() until return false.
+// NextRow() can be also called initially, to advance straight to the first row of the first table.
+// Actual flux table schema (columns with names, data types, etc) is returned by Columns() method.
+// Data are acquired by Values() or by ValueByName() functions.
 // Preliminary end can be caused by an error, so when NextTable() or NextRow() return false, check Err() for an error.
 // Reader is automatically closed at the end reading or in case of an error.
-type QueryResult struct {
+type QueryResults struct {
 	io.Closer
 	csvReader *csv.Reader
 	columns   []TableColumn
@@ -68,43 +69,42 @@ type QueryResult struct {
 	names     map[string]int
 }
 
-// NewQueryResult returns new QueryResult.
-// reader must source csv lines with Flux query response.
-func NewQueryResult(reader io.ReadCloser) *QueryResult {
+// NewQueryResults returns new QueryResults.
+// Reader must source csv lines with Flux query response.
+func NewQueryResults(reader io.ReadCloser) *QueryResults {
 	csvReader := csv.NewReader(reader)
 	csvReader.FieldsPerRecord = -1
-	return &QueryResult{
+	return &QueryResults{
 		Closer:    reader,
 		csvReader: csvReader,
 		names:     map[string]int{},
 	}
 }
 
-// NextTable advances to the next result in the result.
+// NextTable advances to the next table in the query response.
 // Any remaining data in the current table is discarded.
-//
 // When there are no more tables, it returns false.
-func (r *QueryResult) NextTable() bool {
-	return r.next(parsingModeTable)
+func (r *QueryResults) NextTable() bool {
+	return r.next(parsingModeResult)
 }
 
-// NextRow advances to the next row in the current result.
-// When there are no more rows in the current result, it
-// returns false.
-func (r *QueryResult) NextRow() bool {
+// NextRow advances to the next row in the current table.
+// If called in the beginning, it also advances to the first table.
+// When there are no more rows in the current table, it returns false.
+func (r *QueryResults) NextRow() bool {
 	return r.next(parsingModeRow)
 }
 
 // Columns returns information on the columns in the current
 // table. It returns nil if there is no current table (for example
 // before NextTable has been called, or after NextTable returns false).
-func (r *QueryResult) Columns() []TableColumn {
+func (r *QueryResults) Columns() []TableColumn {
 	return r.columns
 }
 
 // Err returns any error encountered. This should be called after NextTable or NextRow
 // returns false to check that all the results were correctly received.
-func (r *QueryResult) Err() error {
+func (r *QueryResults) Err() error {
 	return r.err
 }
 
@@ -113,25 +113,29 @@ func (r *QueryResult) Err() error {
 // All rows in a table have the same number of values.
 // The caller should not use the slice after NextRow
 // has been called again, because it's re-used.
-func (r *QueryResult) Values() []interface{} {
+func (r *QueryResults) Values() []interface{} {
 	return r.values
 }
 
 // ValueByName returns value for given column name.
-// It returns nil if result has no value for such column.
-func (r *QueryResult) ValueByName(name string) interface{} {
+// It returns nil if table has no value for such column.
+func (r *QueryResults) ValueByName(name string) interface{} {
 	if i, ok := r.names[name]; ok {
 		return r.values[i]
 	}
 	return nil
 }
 
-// next advances to next row/result via parsing csv rows
-// returns false at the end of each result  or at the end of stream
-func (r *QueryResult) next(mode parsingMode) bool {
+// next advances to next row/table via parsing csv rows.
+// It returns false at the end of each table  or at the end of the stream.
+func (r *QueryResults) next(mode parsingMode) bool {
 	// set closing query in case of preliminary return
 	var row []string
 	closer := func() {
+		r.columns = nil
+		r.values = nil
+		r.lastRow = nil
+		r.names = map[string]int{}
 		if err := r.Close(); err != nil {
 			message := err.Error()
 			if r.err != nil {
@@ -165,8 +169,7 @@ readRow:
 		parsingState = parsingStateNoTable
 	} else {
 		// test columns consistency in case of data row or already discovered annotations
-		if (row[0] == "" || parsingState == parsingStateAnnotation) &&
-			len(row)-1 != len(r.columns) {
+		if (row[0] == "" || parsingState == parsingStateAnnotation) && len(row)-1 != len(r.columns) {
 			r.err = fmt.Errorf("parsing error, row has different number of columns than the table: %d vs %d", len(row)-1, len(r.columns))
 			return false
 		}
@@ -210,7 +213,7 @@ readRow:
 			r.err = fmt.Errorf("%s%s", message, reference)
 			return false
 		case parsingStateDataRow:
-			if mode == parsingModeTable {
+			if mode == parsingModeResult {
 				// if it is first data row after parsing header, stop
 				if dataTypeAnnotationFound {
 					r.lastRow = row
