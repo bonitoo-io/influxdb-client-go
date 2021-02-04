@@ -698,7 +698,8 @@ d
 	res = influxclient.NewQueryResults(ioutil.NopCloser(reader))
 
 	//test skip first table header
-	require.True(t, res.NextRow() && res.NextRow())
+	require.True(t, res.NextRow())
+	require.True(t, res.NextRow())
 	require.Nil(t, res.Err())
 	require.Equal(t, tables[0].rows[1], res.Values())
 	_ = res.Close()
