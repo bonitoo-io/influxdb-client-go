@@ -2,11 +2,9 @@ package influxclient_test
 
 import (
 	"errors"
-	"fmt"
 	"github.com/stretchr/testify/assert"
 	"io"
 	"io/ioutil"
-	"log"
 	"strings"
 	"testing"
 	"time"
@@ -63,30 +61,6 @@ func verifyParsingError(t *testing.T, csvTable, error string) {
 	require.False(t, res.NextTable())
 	require.NotNil(t, res.Err())
 	assert.Equal(t, error, res.Err().Error())
-
-}
-
-func TestQueryResult(t *testing.T) {
-	csvTable := `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
-#group,false,false,true,true,false,false,true,true,true,true
-#default,_result,,,,,,,,,
-,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
-,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,1.4,f,test,1,adsfasdf
-,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,6.6,f,test,1,adsfasdf
-
-`
-	reader := strings.NewReader(csvTable)
-	res := influxclient.NewQueryResults(ioutil.NopCloser(reader))
-	for res.NextTable() && res.Err() == nil {
-		for res.NextRow() {
-			// read values
-			temp := res.Values()[5].(float64)
-			fmt.Println(temp)
-		}
-	}
-	if res.Err() != nil {
-		log.Fatal(res.Err())
-	}
 
 }
 

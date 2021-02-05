@@ -65,7 +65,8 @@ type QueryResults struct {
 	columns   []TableColumn
 	values    []interface{}
 	err       error
-	lastRow   []string
+	reuseRow  bool
+	row       []string
 	names     map[string]int
 }
 
@@ -130,11 +131,9 @@ func (r *QueryResults) ValueByName(name string) interface{} {
 // It returns false at the end of each table  or at the end of the stream.
 func (r *QueryResults) next(mode parsingMode) bool {
 	// set closing query in case of preliminary return
-	var row []string
 	closer := func() {
 		r.columns = nil
 		r.values = nil
-		r.lastRow = nil
 		r.names = map[string]int{}
 		if err := r.Close(); err != nil {
 			message := err.Error()
@@ -148,11 +147,10 @@ func (r *QueryResults) next(mode parsingMode) bool {
 	parsingState := parsingStateDataRow
 	dataTypeAnnotationFound := false
 readRow:
-	if r.lastRow != nil {
-		row = r.lastRow
-		r.lastRow = nil
+	if r.reuseRow {
+		r.reuseRow = false
 	} else {
-		row, r.err = r.csvReader.Read()
+		r.row, r.err = r.csvReader.Read()
 	}
 	if r.err == io.EOF {
 		r.err = nil
@@ -162,20 +160,20 @@ readRow:
 		return false
 	}
 
-	if len(row) <= 1 {
+	if len(r.row) <= 1 {
 		goto readRow
 	}
 	if r.columns == nil {
 		parsingState = parsingStateNoTable
 	} else {
 		// test columns consistency in case of data row or already discovered annotations
-		if (row[0] == "" || parsingState == parsingStateAnnotation) && len(row)-1 != len(r.columns) {
-			r.err = fmt.Errorf("parsing error, row has different number of columns than the table: %d vs %d", len(row)-1, len(r.columns))
+		if (r.row[0] == "" || parsingState == parsingStateAnnotation) && len(r.row)-1 != len(r.columns) {
+			r.err = fmt.Errorf("parsing error, row has different number of columns than the table: %d vs %d", len(r.row)-1, len(r.columns))
 			return false
 		}
 	}
 	switch {
-	case row[0] == "":
+	case r.row[0] == "":
 		switch parsingState {
 		case parsingStateNoTable:
 			r.err = errors.New("parsing error, annotations not found")
@@ -188,11 +186,11 @@ readRow:
 			parsingState = parsingStateNameRow
 			fallthrough
 		case parsingStateNameRow:
-			if row[1] == "error" {
+			if r.row[1] == "error" {
 				parsingState = parsingStateError
 			} else {
 				r.names = map[string]int{}
-				for i, n := range row[1:] {
+				for i, n := range r.row[1:] {
 					r.columns[i].Name = n
 					r.names[n] = i
 				}
@@ -201,14 +199,14 @@ readRow:
 			goto readRow
 		case parsingStateError:
 			var message string
-			if len(row) > 1 && len(row[1]) > 0 {
-				message = row[1]
+			if len(r.row) > 1 && len(r.row[1]) > 0 {
+				message = r.row[1]
 			} else {
 				message = "unknown query error"
 			}
 			reference := ""
-			if len(row) > 2 && len(row[2]) > 0 {
-				reference = fmt.Sprintf(",%s", row[2])
+			if len(r.row) > 2 && len(r.row[2]) > 0 {
+				reference = fmt.Sprintf(",%s", r.row[2])
 			}
 			r.err = fmt.Errorf("%s%s", message, reference)
 			return false
@@ -216,14 +214,14 @@ readRow:
 			if mode == parsingModeResult {
 				// if it is first data row after parsing header, stop
 				if dataTypeAnnotationFound {
-					r.lastRow = row
+					r.reuseRow = true
 				} else {
 					//skip to next table
 					goto readRow
 				}
 			} else {
 
-				for i, v := range row[1:] {
+				for i, v := range r.row[1:] {
 					r.values[i], r.err = toValue(v, r.columns[i])
 					if r.err != nil {
 						return false
@@ -231,7 +229,7 @@ readRow:
 				}
 			}
 		}
-	case row[0][0] == '#':
+	case r.row[0][0] == '#':
 		switch parsingState {
 		case parsingStateNoTable:
 			parsingState = parsingStateDataRow
@@ -239,35 +237,35 @@ readRow:
 		case parsingStateDataRow:
 			// table definition was found. if next row is requested, and not the initial table, return
 			if mode == parsingModeRow && r.columns != nil {
-				r.lastRow = row
+				r.reuseRow = true
 				closer = func() {}
 				return false
 			}
-			if r.columns == nil || len(r.columns) != len(row)-1 {
-				r.columns = make([]TableColumn, len(row)-1)
-				r.values = make([]interface{}, len(row)-1)
+			if r.columns == nil || len(r.columns) != len(r.row)-1 {
+				r.columns = make([]TableColumn, len(r.row)-1)
+				r.values = make([]interface{}, len(r.row)-1)
 			} else {
-				for i := range row[1:] {
+				for i := range r.row[1:] {
 					r.columns[i] = TableColumn{}
 				}
 			}
 			parsingState = parsingStateAnnotation
 			fallthrough
 		case parsingStateAnnotation:
-			switch row[0] {
+			switch r.row[0] {
 			case "#datatype":
 				dataTypeAnnotationFound = true
-				for i, d := range row[1:] {
+				for i, d := range r.row[1:] {
 					r.columns[i].DataType = d
 				}
 				goto readRow
 			case "#group":
-				for i, g := range row[1:] {
+				for i, g := range r.row[1:] {
 					r.columns[i].IsGroup = g == "true"
 				}
 				goto readRow
 			case "#default":
-				for i, c := range row[1:] {
+				for i, c := range r.row[1:] {
 					r.columns[i].DefaultValue = c
 				}
 				goto readRow
