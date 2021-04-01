@@ -7,17 +7,16 @@ package influxclient
 import (
 	"errors"
 	"fmt"
-	"io"
-
 	"github.com/influxdata/influxdb-client-go/annotatedcsv"
+	"io"
 )
 
 // QueryError defines the information of Flux query error
 type QueryError struct {
 	// Message is a Flux query error message
-	Message string
+	Message string `flux:"error"`
 	// Code is an Flux query error code
-	Code int64
+	Code int64 `flux:"reference"`
 }
 
 func (e *QueryError) Error() string {
@@ -98,12 +97,15 @@ func (r *QueryResultReader) errorSection() error {
 			}
 		}
 		row := r.Row()
-		message, ok1 := row[0].(string)
-		reference, ok2 := row[1].(int64)
-		if !ok1 || !ok2 {
+		if row[0] == "" {
+			return errors.New("no row found in error section")
+		}
+		var e QueryError
+		if err := r.Decode(&e); err != nil {
+
 			return fmt.Errorf("unexpected column types (%T, %T) in error section", row[0], row[1])
 		}
-		return &QueryError{Message: message, Code: reference}
+		return &e
 	}
 	return nil
 }
