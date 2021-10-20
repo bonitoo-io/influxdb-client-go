@@ -92,11 +92,6 @@ func (c *Client) DeletePoints(ctx context.Context, orgID, bucketID string, start
 // The result must be closed after use.
 func (c *Client) Query(ctx context.Context, org, query string) (*QueryResult, error)
 
-// Ready checks that the server is ready, and reports the duration the instance
-// has been up if so. It does not validate authentication parameters.
-// See https://docs.influxdata.com/influxdb/v2.0/api/#operation/GetReady.
-func (c *Client) Ready() (time.Duration, error)
-
 // Health returns an InfluxDB server health check result. Read the HealthCheck.Status field to get server status.
 // Health doesn't validate authentication params.
 func (c *Client) Health(ctx context.Context) (*HealthCheck, error)

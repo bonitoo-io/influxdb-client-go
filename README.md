@@ -16,7 +16,7 @@ State: under development.
 | `PointWriter` | `/api/v2/write` |  |
 | `Query()` | `/api/v2/query` | In progress |
 | `DeletePoints()` | `/api/v2/delete` |  |
-| `Ready()` | `/ready` |  |
+| `Ready()` | `/ready` | Done |
 | `Health()` | `/health` |  |
 | `AuthorizationAPI` | `/api/v2/authorizatons` |  |
 | `BucketAPI` | `/api/v2/buckets` |  |

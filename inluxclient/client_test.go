@@ -6,8 +6,11 @@ package influxclient
 
 import (
 	"github.com/stretchr/testify/assert"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -53,4 +56,39 @@ func TestURLs(t *testing.T) {
 			assert.Equal(t, url.serverAPIURL, c.apiURL.String())
 		})
 	}
+}
+
+func TestReadyOk(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{
+    "status": "ready",
+    "started": "2021-02-24T12:13:37.681813026Z",
+    "up": "5713h41m50.256128486s"
+}`))
+	}))
+	defer ts.Close()
+	client, err := New(Params{ServerURL: ts.URL, AuthToken: ""})
+	require.NoError(t, err)
+	dur, err := client.Ready()
+	require.NoError(t, err)
+	exp := 5713*time.Hour + 41*time.Minute + 50*time.Second + 256128486*time.Nanosecond
+	assert.Equal(t, exp, dur)
+}
+
+func TestReadyHtml(t *testing.T) {
+	html := `<!doctype html><html lang="en"><body><div id="react-root" data-basepath=""></div><script src="/static/39f7ddd770.js"></script></body></html>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "text/html")
+		w.WriteHeader(200)
+		w.Write([]byte(html))
+	}))
+	defer ts.Close()
+	client, err := New(Params{ServerURL: ts.URL, AuthToken: ""})
+	require.NoError(t, err)
+	dur, err := client.Ready()
+	require.Error(t, err)
+	assert.Equal(t, time.Duration(0), dur)
+	assert.Equal(t, "error calling Ready: unexpected response: "+html, err.Error())
 }

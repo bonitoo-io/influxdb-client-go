@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Params holds the parameters for creating a new client.
@@ -90,6 +91,51 @@ func New(params Params) (*Client, error) {
 		return nil, fmt.Errorf("error parsing server URL: %w", err)
 	}
 	return c, nil
+}
+
+// Ready defines model for Ready.
+type Ready struct {
+	Started *time.Time `json:"started,omitempty"`
+	Status  *string    `json:"status,omitempty"`
+	Up      *string    `json:"up,omitempty"`
+}
+
+// Ready checks that the server is ready, and reports the duration the instance
+// has been up if so. It does not validate authentication parameters.
+// See https://docs.influxdata.com/influxdb/v2.0/api/#operation/GetReady.
+func (c *Client) Ready() (time.Duration, error) {
+	queryURL, err := url.Parse(c.params.ServerURL + "/ready")
+	if err != nil {
+		return 0, fmt.Errorf("error calling Ready:  %w", err)
+	}
+	resp, herr := c.makeAPICall(context.Background(), httpParams{
+		endpointURL: queryURL,
+		httpMethod:  http.MethodGet,
+		headers:     map[string]string{"Accept-Encoding": "gzip"},
+		queryParams: nil,
+		body:        nil,
+	})
+	if herr != nil {
+		return 0, fmt.Errorf("error calling Ready:  %w", herr)
+	}
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	if err != nil {
+		return 0, fmt.Errorf("error calling Ready:  %w", err)
+	}
+
+	if resp.Header.Get("Content-Type") == "application/json" {
+		var dest Ready
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return 0, fmt.Errorf("error calling Ready:  %w", err)
+		}
+		up, err := time.ParseDuration(*dest.Up)
+		if err != nil {
+			return 0, fmt.Errorf("error calling Ready:  %w", err)
+		}
+		return up, nil
+	}
+	return 0, fmt.Errorf("error calling Ready: unexpected response: %s", string(bodyBytes))
 }
 
 // makeAPICall issues an HTTP request to InfluxDB server API url according to parameters.
