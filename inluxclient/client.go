@@ -6,10 +6,16 @@
 package influxclient
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -45,6 +51,20 @@ type Client struct {
 	apiURL *url.URL
 }
 
+// httpParams holds parameters for creating an HTTP request
+type httpParams struct {
+	// URL of server endpoint
+	endpointURL *url.URL
+	// Params to be added to URL
+	queryParams map[string]string
+	// HTTP request method, eg. POST
+	httpMethod string
+	// HTTP request headers
+	headers map[string]string
+	// HTTP POST/PUT body
+	body io.Reader
+}
+
 // New creates new Client with given Params, where ServerURL and AuthToken are mandatory.
 func New(params Params) (*Client, error) {
 	c := &Client{params: params}
@@ -70,4 +90,96 @@ func New(params Params) (*Client, error) {
 		return nil, fmt.Errorf("error parsing server URL: %w", err)
 	}
 	return c, nil
+}
+
+// makeAPICall issues an HTTP request to InfluxDB server API url according to parameters.
+// Additionally, sets Authorization header and User-Agent.
+// It return http.response or Error
+func (c *Client) makeAPICall(ctx context.Context, params httpParams) (*http.Response, *Error) {
+	urlParams := make(url.Values)
+
+	for k, v := range params.queryParams {
+		urlParams.Set(k, v)
+	}
+	// copy URL
+	urlObj := *params.endpointURL
+	urlObj.RawQuery = urlParams.Encode()
+
+	fullURL := urlObj.String()
+
+	req, err := http.NewRequestWithContext(ctx, params.httpMethod, fullURL, params.body)
+	if err != nil {
+		return nil, NewError(fmt.Sprintf("error calling %s: %s", fullURL, err.Error()))
+	}
+	for k, v := range params.headers {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("User-Agent", UserAgent)
+	if c.authorization != "" {
+		req.Header.Add("Authorization", c.authorization)
+	}
+
+	resp, err := c.params.HTTPClient.Do(req)
+	if err != nil {
+		return nil, NewError(fmt.Sprintf("error calling %s: %s", fullURL, err.Error()))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, c.resolveHTTPError(resp)
+	}
+
+	return resp, nil
+}
+
+// resolveHTTPError parses server error response and returns error with human readable message
+func (c *Client) resolveHTTPError(r *http.Response) *Error {
+	// successful status code range
+	if r.StatusCode >= 200 && r.StatusCode < 300 {
+		return nil
+	}
+	defer func() {
+		// discard body so connection can be reused
+		_, _ = io.Copy(ioutil.Discard, r.Body)
+		_ = r.Body.Close()
+	}()
+
+	httpError := &Error{}
+
+	if v := r.Header.Get("Retry-After"); v != "" {
+		r, err := strconv.ParseUint(v, 10, 32)
+		if err == nil {
+			httpError.RetryAfter = uint(r)
+		}
+	}
+	// Default code
+	httpError.Code = r.Status
+	// json encoded error
+	ctype, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if ctype == "application/json" {
+		err := json.NewDecoder(r.Body).Decode(&httpError)
+		if err != nil {
+			httpError.Message = err.Error()
+		}
+	} else {
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			httpError.Message = err.Error()
+		} else {
+			httpError.Message = string(body)
+		}
+	}
+
+	if httpError.Message == "" {
+		switch r.StatusCode {
+		case http.StatusTooManyRequests:
+			httpError.Code = "too many requests"
+			httpError.Message = "exceeded rate limit"
+		case http.StatusServiceUnavailable:
+			httpError.Code = "unavailable"
+			httpError.Message = "service temporarily unavailable"
+		default:
+			// InfluxDB 1.x error from v2 compatibility API
+			httpError.Message = r.Header.Get("X-Influxdb-Error")
+		}
+	}
+	return httpError
 }
