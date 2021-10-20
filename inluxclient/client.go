@@ -6,8 +6,14 @@
 package influxclient
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,6 +51,20 @@ type Client struct {
 	apiURL *url.URL
 }
 
+// httpParams holds parameters for creating an HTTP request
+type httpParams struct {
+	// URL of server endpoint
+	endpointURL *url.URL
+	// Params to be added to URL
+	queryParams url.Values
+	// HTTP request method, eg. POST
+	httpMethod string
+	// HTTP request headers
+	headers map[string]string
+	// HTTP POST/PUT body
+	body io.Reader
+}
+
 // New creates new Client with given Params, where ServerURL and AuthToken are mandatory.
 func New(params Params) (*Client, error) {
 	c := &Client{params: params}
@@ -70,4 +90,84 @@ func New(params Params) (*Client, error) {
 		return nil, fmt.Errorf("error parsing server URL: %w", err)
 	}
 	return c, nil
+}
+
+// makeAPICall issues an HTTP request to InfluxDB server API url according to parameters.
+// Additionally, sets Authorization header and User-Agent.
+// It returns http.response or Error
+func (c *Client) makeAPICall(ctx context.Context, params httpParams) (*http.Response, *ServerError) {
+	// copy URL
+	urlObj := *params.endpointURL
+	urlObj.RawQuery = params.queryParams.Encode()
+
+	fullURL := urlObj.String()
+
+	req, err := http.NewRequestWithContext(ctx, params.httpMethod, fullURL, params.body)
+	if err != nil {
+		return nil, NewServerError(fmt.Sprintf("error calling %s: %v", fullURL, err))
+	}
+	for k, v := range params.headers {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("User-Agent", userAgent)
+	if c.authorization != "" {
+		req.Header.Add("Authorization", c.authorization)
+	}
+
+	resp, err := c.params.HTTPClient.Do(req)
+	if err != nil {
+		return nil, NewServerError(fmt.Sprintf("error calling %s: %v", fullURL, err))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, c.resolveHTTPError(resp)
+	}
+
+	return resp, nil
+}
+
+// resolveHTTPError parses server error response and returns error with human readable message
+func (c *Client) resolveHTTPError(r *http.Response) *ServerError {
+	// successful status code range
+	if r.StatusCode >= 200 && r.StatusCode < 300 {
+		return nil
+	}
+
+	httpError := &ServerError{
+		StatusCode: r.StatusCode,
+	}
+
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		httpError.Message = fmt.Sprintf("cannot read error response:: %v", err)
+	}
+	ctype, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if ctype == "application/json" {
+		err := json.NewDecoder(bytes.NewReader(body)).Decode(&httpError)
+		if err != nil {
+			httpError.Message = fmt.Sprintf("cannot decode error response: %v", err)
+		}
+		if httpError.Message == "" && httpError.Code == "" {
+			// Try InfluxDB 1 error
+			var httpError2 struct {
+				// Error message of InfluxDB 1 error
+				Error string `json:"error"`
+			}
+			err := json.NewDecoder(bytes.NewReader(body)).Decode(&httpError2)
+			if err != nil {
+				httpError.Message = fmt.Sprintf("cannot decode error response: %v", err)
+			}
+			if httpError2.Error != "" {
+				httpError.Message = httpError2.Error
+			}
+		}
+	}
+	if httpError.Message == "" {
+		if len(body) > 0 {
+			httpError.Message = string(body)
+		} else {
+			httpError.Message = r.Status
+		}
+	}
+
+	return httpError
 }
