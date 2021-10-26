@@ -5,6 +5,7 @@
 package influxclient
 
 import (
+	"context"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
@@ -71,7 +72,7 @@ func TestReadyOk(t *testing.T) {
 	defer ts.Close()
 	client, err := New(Params{ServerURL: ts.URL, AuthToken: ""})
 	require.NoError(t, err)
-	dur, err := client.Ready()
+	dur, err := client.Ready(context.Background())
 	require.NoError(t, err)
 	exp := 5713*time.Hour + 41*time.Minute + 50*time.Second + 256128486*time.Nanosecond
 	assert.Equal(t, exp, dur)
@@ -87,7 +88,7 @@ func TestReadyHtml(t *testing.T) {
 	defer ts.Close()
 	client, err := New(Params{ServerURL: ts.URL, AuthToken: ""})
 	require.NoError(t, err)
-	dur, err := client.Ready()
+	dur, err := client.Ready(context.Background())
 	require.Error(t, err)
 	assert.Equal(t, time.Duration(0), dur)
 	assert.Equal(t, "error calling Ready: unexpected response: "+html, err.Error())

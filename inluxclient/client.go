@@ -103,12 +103,12 @@ type Ready struct {
 // Ready checks that the server is ready, and reports the duration the instance
 // has been up if so. It does not validate authentication parameters.
 // See https://docs.influxdata.com/influxdb/v2.0/api/#operation/GetReady.
-func (c *Client) Ready() (time.Duration, error) {
+func (c *Client) Ready(ctx context.Context) (time.Duration, error) {
 	queryURL, err := url.Parse(c.params.ServerURL + "/ready")
 	if err != nil {
 		return 0, fmt.Errorf("error calling Ready:  %w", err)
 	}
-	resp, herr := c.makeAPICall(context.Background(), httpParams{
+	resp, herr := c.makeAPICall(ctx, httpParams{
 		endpointURL: queryURL,
 		httpMethod:  http.MethodGet,
 		headers:     map[string]string{"Accept-Encoding": "gzip"},
