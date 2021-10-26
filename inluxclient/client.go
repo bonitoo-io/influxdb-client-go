@@ -92,6 +92,49 @@ func New(params Params) (*Client, error) {
 	return c, nil
 }
 
+// HealthCheck defines model for HealthCheck.
+type HealthCheck struct {
+	Checks  *[]HealthCheck `json:"checks,omitempty"`
+	Commit  *string        `json:"commit,omitempty"`
+	Message *string        `json:"message,omitempty"`
+	Name    string         `json:"name"`
+	Status  string         `json:"status"`
+	Version *string        `json:"version,omitempty"`
+}
+
+// Health returns an InfluxDB server health check result. Read the HealthCheck.Status field to get server status.
+// Health doesn't validate authentication params.
+func (c *Client) Health(ctx context.Context) (*HealthCheck, error) {
+	queryURL, err := url.Parse(c.params.ServerURL + "/health")
+	if err != nil {
+		return nil, fmt.Errorf("error calling health:  %w", err)
+	}
+	resp, herr := c.makeAPICall(ctx, httpParams{
+		endpointURL: queryURL,
+		httpMethod:  http.MethodGet,
+		headers:     nil,
+		queryParams: nil,
+		body:        nil,
+	})
+	if herr != nil {
+		return nil, fmt.Errorf("error calling health:  %w", herr)
+	}
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("error calling health:  %w", err)
+	}
+
+	if resp.Header.Get("Content-Type") == "application/json" {
+		var dest HealthCheck
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, fmt.Errorf("error calling health:  %w", err)
+		}
+		return &dest, nil
+	}
+	return nil, fmt.Errorf("error calling health: unexpected response: %s", string(bodyBytes))
+}
+
 // makeAPICall issues an HTTP request to InfluxDB server API url according to parameters.
 // Additionally, sets Authorization header and User-Agent.
 // It return http.response or Error

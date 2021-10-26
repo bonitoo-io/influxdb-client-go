@@ -97,10 +97,6 @@ func (c *Client) Query(ctx context.Context, org, query string) (*QueryResult, er
 // See https://docs.influxdata.com/influxdb/v2.0/api/#operation/GetReady.
 func (c *Client) Ready() (time.Duration, error)
 
-// Health returns an InfluxDB server health check result. Read the HealthCheck.Status field to get server status.
-// Health doesn't validate authentication params.
-func (c *Client) Health(ctx context.Context) (*HealthCheck, error)
-
 // Authorization returns a value that can be used to interact with the
 // authorization-related parts of the InfluxDB API.
 func (c *Client) AuthorizationAPI() *AuthorizationAPI
