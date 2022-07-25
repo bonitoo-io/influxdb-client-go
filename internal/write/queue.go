@@ -8,36 +8,32 @@ import (
 	"container/list"
 )
 
-type queue struct {
+type Queue struct {
 	list  *list.List
 	limit int
 }
 
-func newQueue(limit int) *queue {
-	return &queue{list: list.New(), limit: limit}
+func NewQueue(limit int) *Queue {
+	return &Queue{list: list.New(), limit: limit}
 }
-func (q *queue) push(batch *Batch) bool {
+func (q *Queue) Push(batch *Batch) bool {
 	overWrite := false
 	if q.list.Len() == q.limit {
-		q.pop()
+		q.list.Remove(q.list.Front())
 		overWrite = true
 	}
 	q.list.PushBack(batch)
 	return overWrite
 }
 
-func (q *queue) pop() *Batch {
+func (q *Queue) RemoveIfFirst(batch *Batch) {
 	el := q.list.Front()
-	if el != nil {
+	if el != nil && el.Value == batch {
 		q.list.Remove(el)
-		batch := el.Value.(*Batch)
-		batch.Evicted = true
-		return batch
 	}
-	return nil
 }
 
-func (q *queue) first() *Batch {
+func (q *Queue) First() *Batch {
 	el := q.list.Front()
 	if el != nil {
 		return el.Value.(*Batch)
@@ -45,6 +41,10 @@ func (q *queue) first() *Batch {
 	return nil
 }
 
-func (q *queue) isEmpty() bool {
+func (q *Queue) IsEmpty() bool {
 	return q.list.Len() == 0
+}
+
+func (q *Queue) Len() int {
+	return q.list.Len()
 }

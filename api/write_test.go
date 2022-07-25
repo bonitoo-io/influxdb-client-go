@@ -6,6 +6,8 @@ package api
 
 import (
 	"fmt"
+	iwrite "github.com/influxdata/influxdb-client-go/v2/internal/write"
+	ilog "log"
 	"math"
 	"runtime"
 	"strings"
@@ -96,6 +98,143 @@ func TestFlushInterval(t *testing.T) {
 	writeAPI.Close()
 
 	service.Close()
+}
+
+func TestBufferOverwrite(t *testing.T) {
+	log.Log.SetLogLevel(log.DebugLevel)
+	ilog.SetFlags(ilog.Ldate | ilog.Lmicroseconds)
+	hs := test.NewTestService(t, "http://localhost:8086")
+	// sleep takes at least more than 10ms (sometimes 15ms) on Windows https://github.com/golang/go/issues/44343
+	baseRetryInterval := uint(1)
+	if runtime.GOOS == "windows" {
+		baseRetryInterval = 20
+	}
+	// Buffer limit 15000, bach is 5000 => buffer for 3 batches
+	opts := write.DefaultOptions().SetRetryInterval(baseRetryInterval).SetRetryBufferLimit(15000)
+
+	srv := NewWriteAPI("my-org", "my-bucket", hs, opts)
+	// Set permanent reply error to force writes fail and retry
+	hs.SetReplyError(&http.Error{
+		StatusCode: 429,
+	})
+	// This batch will fail and it will be added to retry queue
+	b1 := iwrite.NewBatch("1\n", opts.MaxRetryTime())
+	err := srv.sendBatch(b1)
+	assert.NotNil(t, err)
+	//assert.Equal(t, uint(baseRetryInterval), srv.retryDelay)
+	assertBetween(t, srv.retryDelay, baseRetryInterval, baseRetryInterval*2)
+	assert.Equal(t, 1, srv.retryQueue.Len())
+
+	<-time.After(time.Millisecond * time.Duration(srv.retryDelay))
+	b2 := iwrite.NewBatch("2\n", opts.MaxRetryTime())
+	// First batch will be tried to write again and this one will added to retry queue
+	err = srv.sendBatch(b2)
+	assert.NotNil(t, err)
+	assertBetween(t, srv.retryDelay, baseRetryInterval*2, baseRetryInterval*4)
+	assert.Equal(t, 2, srv.retryQueue.Len())
+
+	<-time.After(time.Millisecond * time.Duration(srv.retryDelay))
+	b3 := iwrite.NewBatch("3\n", opts.MaxRetryTime())
+	// First batch will be tried to write again and this one will added to retry queue
+	err = srv.sendBatch(b3)
+	assert.NotNil(t, err)
+	assertBetween(t, srv.retryDelay, baseRetryInterval*4, baseRetryInterval*8)
+	assert.Equal(t, 3, srv.retryQueue.Len())
+
+	// Write early and overwrite
+	b4 := iwrite.NewBatch("4\n", opts.MaxRetryTime())
+	// No write will occur, because retry delay has not passed yet
+	// However new bach will be added to retry queue. Retry queue has limit 3,
+	// so first batch will be discarded
+	priorRetryDelay := srv.retryDelay
+	err = srv.sendBatch(b4)
+	assert.NoError(t, err)
+	assert.Equal(t, priorRetryDelay, srv.retryDelay) // Accumulated retry delay should be retained despite batch discard
+	assert.Equal(t, 3, srv.retryQueue.Len())
+
+	// Overwrite
+	<-time.After(time.Millisecond * time.Duration(srv.retryDelay) / 2)
+	b5 := iwrite.NewBatch("5\n", opts.MaxRetryTime())
+	// Second batch will be tried to write again
+	// However, write will fail and as new batch is added to retry queue
+	// the second batch will be discarded
+	err = srv.sendBatch(b5)
+	assert.Nil(t, err) // No error should be returned, because no write was attempted (still waiting for retryDelay to expire)
+	assert.Equal(t, 3, srv.retryQueue.Len())
+
+	<-time.After(time.Millisecond * time.Duration(srv.retryDelay))
+	// Clear error and let write pass
+	hs.SetReplyError(nil)
+	// Batches from retry queue will be sent first
+	err = srv.sendBatch(iwrite.NewBatch("6\n", opts.MaxRetryTime()))
+	assert.Nil(t, err)
+	assert.Equal(t, 0, srv.retryQueue.Len())
+	require.Len(t, hs.Lines(), 4)
+	assert.Equal(t, "3", hs.Lines()[0])
+	assert.Equal(t, "4", hs.Lines()[1])
+	assert.Equal(t, "5", hs.Lines()[2])
+	assert.Equal(t, "6", hs.Lines()[3])
+}
+
+// TODO: cannot reliably test new batches and scheduled retries
+// leaving for now
+func TestRetryStrategy(t *testing.T) {
+	log.Log.SetLogLevel(log.DebugLevel)
+	hs := test.NewTestService(t, "http://localhost:8086")
+	opts := write.DefaultOptions().SetRetryInterval(1)
+	writeAPI := NewWriteAPI("my-org", "my-bucket", hs, opts)
+
+	// Set permanent reply error to force writes fail and retry
+	hs.SetReplyError(&http.Error{
+		StatusCode: 429,
+	})
+	// This batch will fail and it be added to retry queue
+	b1 := iwrite.NewBatch("1\n", opts.MaxRetryTime())
+	err := writeAPI.sendBatch(b1)
+	assert.NotNil(t, err)
+	assert.EqualValues(t, 1, writeAPI.retryDelay)
+	assert.Equal(t, 1, writeAPI.retryQueue.Len())
+
+	//wait retry delay + little more
+	<-time.After(time.Millisecond*time.Duration(writeAPI.retryDelay) + time.Microsecond*5)
+	// First batch will be tried to write again and this one will added to retry queue
+	b2 := iwrite.NewBatch("2\n", opts.MaxRetryTime())
+	err = writeAPI.sendBatch(b2)
+	assert.NotNil(t, err)
+	assertBetween(t, writeAPI.retryDelay, 2, 4)
+	assert.Equal(t, 2, writeAPI.retryQueue.Len())
+
+	//wait retry delay + little more
+	<-time.After(time.Millisecond*time.Duration(writeAPI.retryDelay) + time.Microsecond*5)
+	// First batch will be tried to write again and this one will added to retry queue
+	b3 := iwrite.NewBatch("3\n", opts.MaxRetryTime())
+	err = writeAPI.sendBatch(b3)
+	assert.NotNil(t, err)
+	assertBetween(t, writeAPI.retryDelay, 4, 8)
+	assert.Equal(t, 3, writeAPI.retryQueue.Len())
+
+	//wait retry delay + little more
+	<-time.After(time.Millisecond*time.Duration(writeAPI.retryDelay) + time.Microsecond*5)
+	// First batch will be tried to write again and this one will added to retry queue
+	b4 := iwrite.NewBatch("4\n", opts.MaxRetryTime())
+	err = writeAPI.sendBatch(b4)
+	assert.NotNil(t, err)
+	assertBetween(t, writeAPI.retryDelay, 8, 16)
+	assert.Equal(t, 4, writeAPI.retryQueue.Len())
+
+	<-time.After(time.Millisecond*time.Duration(writeAPI.retryDelay) + time.Microsecond*5)
+	// Clear error and let write pass
+	hs.SetReplyError(nil)
+	// Batches from retry queue will be sent first
+	err = writeAPI.sendBatch(iwrite.NewBatch("5\n", opts.MaxRetryTime()))
+	assert.Nil(t, err)
+	assert.Equal(t, 0, writeAPI.retryQueue.Len())
+	require.Len(t, hs.Lines(), 5)
+	assert.Equal(t, "1", hs.Lines()[0])
+	assert.Equal(t, "2", hs.Lines()[1])
+	assert.Equal(t, "3", hs.Lines()[2])
+	assert.Equal(t, "4", hs.Lines()[3])
+	assert.Equal(t, "5", hs.Lines()[4])
 }
 
 func TestRetry(t *testing.T) {
@@ -231,4 +370,29 @@ func TestClosing(t *testing.T) {
 	fmt.Println("Diff", diff)
 	assert.Len(t, service.Lines(), 0)
 
+}
+
+func TestPow(t *testing.T) {
+	assert.EqualValues(t, 1, pow(10, 0))
+	assert.EqualValues(t, 10, pow(10, 1))
+	assert.EqualValues(t, 4, pow(2, 2))
+	assert.EqualValues(t, 1, pow(1, 2))
+	assert.EqualValues(t, 125, pow(5, 3))
+}
+
+func assertBetween(t *testing.T, val, min, max uint) {
+	t.Helper()
+	assert.True(t, val >= min && val <= max, fmt.Sprintf("%d is outside <%d;%d>", val, min, max))
+}
+
+func TestComputeRetryDelay(t *testing.T) {
+	hs := test.NewTestService(t, "http://localhost:8888")
+	opts := write.DefaultOptions()
+	writeAPI := NewWriteAPI("my-org", "my-bucket", hs, opts)
+	assertBetween(t, writeAPI.computeRetryDelay(0), 5_000, 10_000)
+	assertBetween(t, writeAPI.computeRetryDelay(1), 10_000, 20_000)
+	assertBetween(t, writeAPI.computeRetryDelay(2), 20_000, 40_000)
+	assertBetween(t, writeAPI.computeRetryDelay(3), 40_000, 80_000)
+	assertBetween(t, writeAPI.computeRetryDelay(4), 80_000, 125_000)
+	assert.EqualValues(t, 125_000, writeAPI.computeRetryDelay(5))
 }
