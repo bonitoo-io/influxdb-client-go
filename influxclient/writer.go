@@ -147,7 +147,7 @@ func (p *PointsWriter) WritePoints(points ...*Point) {
 //		  ID string `lp:"tag,device_id"`
 //		  Temp float64 `lp:"field,temperature"`
 //		  Hum int	`lp:"field,humidity"`
-//		  Time time.Time `lp:"timestamp,temperature"`
+//		  Time time.Time `lp:"timestamp"`
 //		  Description string `lp:"-"`
 //	 }
 func (p *PointsWriter) WriteData(points ...interface{}) {
@@ -170,7 +170,6 @@ func (p *PointsWriter) scheduleFlush() {
 		p.flushT.Stop()
 	}
 	p.flushT = time.AfterFunc(time.Duration(p.params.FlushInterval)*time.Millisecond, func() {
-		//log.Println("[D] PointsWriter: timed flush")
 		p.flushCh <- struct{}{}
 	})
 }
@@ -220,8 +219,9 @@ func (p *PointsWriter) writeProc() {
 				retry = se.StatusCode >= 429
 			}
 			if p.params.WriteFailed != nil {
-				retry = p.params.WriteFailed(err, batch.lines, failedAttempts, batch.expires)
+				retry = p.params.WriteFailed(err, batch.lines, failedAttempts, batch.expires) && retry
 			}
+			retry = p.params.RetryInterval > 0 && retry
 			if retry {
 				p.retryBuffer.AddLines(
 					batch.lines,

@@ -76,7 +76,7 @@ func (c *Client) Write(ctx context.Context, bucket string, buff []byte) error {
 //		  ID string `lp:"tag,device_id"`
 //		  Temp float64 `lp:"field,temperature"`
 //		  Hum int	`lp:"field,humidity"`
-//		  Time time.Time `lp:"timestamp,temperature"`
+//		  Time time.Time `lp:"timestamp"`
 //		  Description string `lp:"-"`
 //	 }
 //
